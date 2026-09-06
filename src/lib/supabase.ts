@@ -1,27 +1,42 @@
 import { createClient } from '@supabase/supabase-js';
 
-const getEnv = (key: string): string => {
-  if (typeof import.meta !== 'undefined' && import.meta.env) {
-    if (import.meta.env[`VITE_${key}`]) return import.meta.env[`VITE_${key}`];
-    if (import.meta.env[`EXPO_PUBLIC_${key}`]) return import.meta.env[`EXPO_PUBLIC_${key}`];
-    if (import.meta.env[key]) return import.meta.env[key];
-  }
-  if (typeof process !== 'undefined' && process.env) {
-    if (process.env[`VITE_${key}`]) return process.env[`VITE_${key}`]!;
-    if (process.env[`EXPO_PUBLIC_${key}`]) return process.env[`EXPO_PUBLIC_${key}`]!;
-    if (process.env[key]) return process.env[key]!;
+const cleanUrl = (url: string | undefined): string => {
+  if (!url) return '';
+  const trimmed = url.replace(/^["']|["']$/g, '').trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
   }
   return '';
 };
 
-const supabaseUrl = getEnv('SUPABASE_URL') || 'https://demo-travora.supabase.co';
-const supabaseAnonKey = getEnv('SUPABASE_ANON_KEY') || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy_key';
+const getEnv = (key: string): string => {
+  let val = '';
+  if (typeof import.meta !== 'undefined' && import.meta.env) {
+    val = (import.meta.env as any)[`VITE_${key}`] || (import.meta.env as any)[`EXPO_PUBLIC_${key}`] || (import.meta.env as any)[key] || '';
+  }
+  if (!val && typeof process !== 'undefined' && process.env) {
+    val = (process.env as any)[`VITE_${key}`] || (process.env as any)[`EXPO_PUBLIC_${key}`] || (process.env as any)[key] || '';
+  }
+  if (typeof val === 'string') {
+    return val.replace(/^["']|["']$/g, '').trim();
+  }
+  return '';
+};
+
+const configuredUrl = cleanUrl(getEnv('SUPABASE_URL'));
+const configuredAnonKey = getEnv('SUPABASE_ANON_KEY');
 
 export const isSupabaseConfigured = Boolean(
-  getEnv('SUPABASE_URL') && getEnv('SUPABASE_ANON_KEY') && !supabaseUrl.includes('demo-travora')
+  configuredUrl && configuredAnonKey && !configuredUrl.includes('demo-travora')
 );
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+const fallbackUrl = 'https://demo-travora.supabase.co';
+const fallbackKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy_key';
+
+const finalUrl = configuredUrl || fallbackUrl;
+const finalKey = configuredAnonKey || fallbackKey;
+
+export const supabase = createClient(finalUrl, finalKey, {
   auth: {
     storage: typeof window !== 'undefined' ? window.localStorage : undefined,
     autoRefreshToken: true,
