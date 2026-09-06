@@ -120,8 +120,53 @@ export const checkGoogleOAuthHashCallback = async (): Promise<GoogleUserProfile 
 };
 
 /**
+ * Signs in using Google Identity Services (GIS) oauth2 token client.
+ * Uses window.postMessage from accounts.google.com to the current origin.
+ * Does not require a redirect URI, only requires Authorized JavaScript origins (http://localhost:3000).
+ */
+export const requestGoogleTokenViaGis = async (clientId: string): Promise<GoogleUserProfile> => {
+  const loaded = await loadGoogleIdentityScript();
+  if (!loaded || typeof window === 'undefined' || !window.google?.accounts?.oauth2) {
+    throw new Error('Google Identity Services library not available.');
+  }
+
+  return new Promise((resolve, reject) => {
+    try {
+      const tokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: clientId.trim(),
+        scope: 'openid email profile',
+        callback: async (tokenResponse: any) => {
+          if (tokenResponse?.error) {
+            reject(new Error(tokenResponse.error_description || tokenResponse.error || 'Google authorization error.'));
+            return;
+          }
+          if (!tokenResponse?.access_token) {
+            reject(new Error('No access token received from Google.'));
+            return;
+          }
+          try {
+            const profile = await fetchGoogleUserInfo(tokenResponse.access_token);
+            resolve(profile);
+          } catch (err: any) {
+            reject(err);
+          }
+        },
+        error_callback: (nonOAuthErr: any) => {
+          reject(new Error(nonOAuthErr?.message || 'Google sign-in popup error.'));
+        },
+      });
+
+      tokenClient.requestAccessToken({ prompt: 'select_account' });
+    } catch (err) {
+      reject(err);
+    }
+  });
+};
+
+/**
  * Launches real Google OAuth 2.0 Web Popup.
- * Connects directly to https://accounts.google.com for authentic Google Account selection.
+ * First tries modern GIS token client (which avoids redirect URI errors),
+ * and falls back to standard OAuth 2.0 popup.
  */
 export const launchGoogleOAuthPopup = async (clientId: string): Promise<GoogleUserProfile> => {
   if (!clientId || !clientId.trim()) {
@@ -129,6 +174,18 @@ export const launchGoogleOAuthPopup = async (clientId: string): Promise<GoogleUs
   }
 
   const cleanClientId = clientId.trim();
+
+  // 1. Try Google Identity Services (GIS) Token Client first (avoids redirect_uri_mismatch)
+  try {
+    const isGsiReady = await loadGoogleIdentityScript();
+    if (isGsiReady && typeof window !== 'undefined' && window.google?.accounts?.oauth2) {
+      return await requestGoogleTokenViaGis(cleanClientId);
+    }
+  } catch (gisError: any) {
+    console.warn('[GOOGLE AUTH] GIS token client error, attempting standard OAuth popup fallback:', gisError);
+  }
+
+  // 2. Fallback to standard OAuth 2.0 Web Popup
   const redirectUri = window.location.origin;
   const scope = encodeURIComponent('openid email profile');
   const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${cleanClientId}&redirect_uri=${encodeURIComponent(
