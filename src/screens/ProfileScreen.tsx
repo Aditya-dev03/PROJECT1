@@ -9,7 +9,11 @@ import { useTrips } from '../context/TripContext';
 import { useExpenses } from '../context/ExpenseContext';
 import { getInitials, formatCurrency, extractCurrencySymbol } from '../utils';
 
-export const ProfileScreen: React.FC = () => {
+interface ProfileScreenProps {
+  onLogout?: () => void;
+}
+
+export const ProfileScreen: React.FC<ProfileScreenProps> = ({ onLogout }) => {
   const { theme, isDark, toggleTheme } = useTheme();
   const { user, logout, updateUser } = useAuth();
   const { settings, updateSettings } = useUser();
@@ -366,7 +370,10 @@ export const ProfileScreen: React.FC = () => {
 
         {/* Sign Out Button */}
         <button
-          onClick={logout}
+          onClick={async () => {
+            await logout();
+            if (onLogout) onLogout();
+          }}
           style={{
             width: '100%',
             height: '52px',

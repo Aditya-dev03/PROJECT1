@@ -370,6 +370,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   onClick={async () => {
                     setShowUserMenu(false);
                     await logout();
+                    onNavigate('auth');
                   }}
                   style={{
                     width: '100%',

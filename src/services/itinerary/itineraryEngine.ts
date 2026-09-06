@@ -2,6 +2,7 @@ import { Trip, ItineraryDay } from '../../types';
 import { destinationResolver } from './destinationResolver';
 import { placesService } from '../placesService';
 import { foursquareService } from '../foursquareService';
+import { geminiService } from '../geminiService';
 import { placeDiscoveryService } from './placeDiscoveryService';
 import { placeNormalizer } from './placeNormalizer';
 import { placeRanker } from './placeRanker';
@@ -196,7 +197,7 @@ export const itineraryEngine = {
 
     // 11. AI Planning (Gemini) with Repair Pipeline
     let finalRawItinerary: RawAIItinerary;
-    const hasGeminiKey = !!process.env.EXPO_PUBLIC_GEMINI_API_KEY || !!process.env.GEMINI_API_KEY;
+    const hasGeminiKey = !!geminiService.getApiKey();
 
     if (hasGeminiKey) {
       try {

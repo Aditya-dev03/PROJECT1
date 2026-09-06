@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { loginAsGuest as _loginAsGuest, logoutGuest, getGuestSession } from '../services/auth/guestAuth';
-import { GoogleUserProfile } from '../services/auth/googleAuth';
+import { GoogleUserProfile, checkGoogleOAuthHashCallback } from '../services/auth/googleAuth';
 
 export interface User {
   id: string;
@@ -60,6 +60,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const restoreSession = useCallback(async () => {
     try {
       setIsLoading(true);
+
+      // 0. Check Google OAuth hash callback (if returned from accounts.google.com with #access_token=...)
+      const googleProfile = await checkGoogleOAuthHashCallback();
+      if (googleProfile) {
+        await logoutGuest();
+        const googleUser: User = {
+          id: googleProfile.id || 'google_' + Date.now(),
+          name: googleProfile.name || 'Google Traveler',
+          email: googleProfile.email,
+          photo: googleProfile.photo || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=200&q=80',
+          isGuest: false,
+        };
+        setUser(googleUser);
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem(REAL_AUTH_KEY, JSON.stringify(googleUser));
+        }
+        setIsLoading(false);
+        return;
+      }
 
       // 1. Check local persistent authenticated session first
       if (typeof window !== 'undefined') {

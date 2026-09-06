@@ -107,6 +107,13 @@ const AppContent = () => {
     }
   }, [user, currentScreen, autoOpenJoin, initialJoinCode]);
 
+  // If user logs out, transition immediately back to auth screen
+  React.useEffect(() => {
+    if (!user && currentScreen !== 'splash' && currentScreen !== 'onboarding' && currentScreen !== 'auth' && currentScreen !== 'phone_login' && currentScreen !== 'otp') {
+      setCurrentScreen('auth');
+    }
+  }, [user, currentScreen]);
+
   // View Trip Hub
   const handleViewTrip = (id: string) => {
     setSelectedTripId(id);
@@ -262,7 +269,9 @@ const AppContent = () => {
           />
         )}
 
-        {currentScreen === 'profile' && <ProfileScreen />}
+        {currentScreen === 'profile' && (
+          <ProfileScreen onLogout={() => setCurrentScreen('auth')} />
+        )}
       </main>
 
       {/* Mobile Bottom Navigation */}
