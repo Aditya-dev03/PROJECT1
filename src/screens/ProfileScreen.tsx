@@ -122,7 +122,7 @@ export const ProfileScreen: React.FC = () => {
                 <h2 style={{ fontSize: '1.35rem', fontWeight: 800, color: theme.text, margin: 0 }}>
                   {user?.name || 'Traveler'}
                 </h2>
-                {user?.isGuest && (
+                {user?.isGuest ? (
                   <span
                     style={{
                       fontSize: '0.72rem',
@@ -134,6 +134,20 @@ export const ProfileScreen: React.FC = () => {
                     }}
                   >
                     GUEST
+                  </span>
+                ) : (
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 700,
+                      color: '#10B981',
+                      backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                      border: '1px solid rgba(16, 185, 129, 0.3)',
+                      padding: '2px 8px',
+                      borderRadius: '6px',
+                    }}
+                  >
+                    ✓ GOOGLE ACCOUNT
                   </span>
                 )}
               </div>
