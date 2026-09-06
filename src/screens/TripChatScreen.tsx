@@ -5,6 +5,7 @@ import { useChat } from '../context/ChatContext';
 import { useAuth } from '../context/AuthContext';
 import { useMembers } from '../context/MemberContext';
 import { Trip } from '../types';
+import { cloudSyncService } from '../services/cloudSyncService';
 import { getInitials } from '../utils';
 
 interface TripChatProps {
@@ -15,7 +16,7 @@ interface TripChatProps {
 export const TripChatScreen: React.FC<TripChatProps> = ({ onBack, tripData }) => {
   const { theme, isDark } = useTheme();
   const { user } = useAuth();
-  const { getMessages, addMessage } = useChat();
+  const { getMessages, addMessage, syncMessagesForTrip } = useChat();
   const { getMembersByTripId } = useMembers();
 
   const tripId = tripData.id;
@@ -35,6 +36,17 @@ export const TripChatScreen: React.FC<TripChatProps> = ({ onBack, tripData }) =>
     scrollToBottom();
   }, [messages.length]);
 
+  // Real-time listener for incoming messages from friends across devices
+  useEffect(() => {
+    if (!tripData.joinCode) return;
+    const unsubscribe = cloudSyncService.subscribeToTripRealtime(tripData.joinCode, (event) => {
+      if (event.type === 'CHAT_MESSAGE' && event.payload) {
+        syncMessagesForTrip(tripId, [event.payload]);
+      }
+    });
+    return () => unsubscribe();
+  }, [tripData.joinCode, tripId, syncMessagesForTrip]);
+
   const handleSend = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!inputMessage.trim() && !selectedPhoto) return;
@@ -46,7 +58,7 @@ export const TripChatScreen: React.FC<TripChatProps> = ({ onBack, tripData }) =>
       text: inputMessage.trim(),
       image: selectedPhoto || undefined,
       type: 'message',
-    });
+    }, tripData.joinCode);
 
     setInputMessage('');
     setSelectedPhoto(null);

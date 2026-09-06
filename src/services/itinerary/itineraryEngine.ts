@@ -31,19 +31,27 @@ export const calculateTripDays = (datesStr?: string): number => {
 
   const parts = datesStr.split(' - ');
   if (parts.length === 2) {
-    const start = new Date(parts[0].trim());
-    const end = new Date(parts[1].trim());
+    let startStr = parts[0].trim();
+    const endStr = parts[1].trim();
+
+    const yearMatch = endStr.match(/\b(20\d\d)\b/);
+    if (yearMatch && !startStr.match(/\b(20\d\d)\b/)) {
+      startStr = `${startStr}, ${yearMatch[1]}`;
+    }
+
+    const start = new Date(startStr);
+    const end = new Date(endStr);
     if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
       const diffTime = Math.abs(end.getTime() - start.getTime());
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-      return Math.max(1, Math.min(diffDays, 30));
+      const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)) + 1;
+      return Math.max(1, Math.min(diffDays, 14));
     }
   }
 
   const singleDayMatch = datesStr.match(/(\d+)\s*(day|days)/i);
   if (singleDayMatch) {
     const days = parseInt(singleDayMatch[1], 10);
-    return Math.max(1, Math.min(days, 30));
+    return Math.max(1, Math.min(days, 14));
   }
 
   return 3;
@@ -58,7 +66,10 @@ export const itineraryEngine = {
     options?: ItineraryGenerationOptions
   ): Promise<ItineraryDay[]> {
     const numDays = calculateTripDays(trip.dates);
-    const selectedInterests = trip.interests || [];
+    const selectedInterests =
+      Array.isArray(trip.interests) && trip.interests.length > 0
+        ? trip.interests
+        : ['Attractions', 'Cafes', 'Restaurants'];
 
     console.log(`\n==================================================`);
     console.log(`[TRIP INPUT]`);
@@ -68,12 +79,6 @@ export const itineraryEngine = {
     console.log(`Selected interests EXACTLY: [ ${selectedInterests.map((i) => `'${i}'`).join(', ')} ]`);
     console.log(`Selected interest count: ${selectedInterests.length}`);
     console.log(`==================================================`);
-
-    // 1. HARD CONSTRAINT: No empty interests allowed. Halt immediately.
-    if (selectedInterests.length === 0) {
-      console.warn('[ITINERARY ENGINE] No interests selected for trip. Halting generation.');
-      throw new Error("Please select at least one type of place you'd like to visit.");
-    }
 
     // 2. Authoritative Category Resolution
     const allowedFsqCategoryIds = getAllowedFoursquareCategoryIds(selectedInterests);
@@ -88,7 +93,7 @@ export const itineraryEngine = {
     const resolvedDest = await destinationResolver.resolveDestination(trip.destination);
     console.log(`[ITINERARY] Destination resolved: ${resolvedDest.cleanName} (${resolvedDest.regionType}, ${resolvedDest.country})`);
 
-    // 4. Multi-Tier Places Discovery (Tier 1: Foursquare, Tier 2: Geoapify, Tier 3: Gemini AI, Tier 4: Curated)
+    // 4. Multi-Tier Places Discovery (Tier 1: Foursquare, Tier 2: Geoapify, Tier 3: Gemini AI, Tier 4: Curated, Tier 5: Universal Synthesizer)
     const targetActivitiesPerDay = trip.pace === 'Relaxed' ? 3 : trip.pace === 'Packed' ? 5 : 4;
     const requiredActivities = numDays * targetActivitiesPerDay;
     const safetyBuffer = Math.ceil(requiredActivities * 0.3);
@@ -106,8 +111,12 @@ export const itineraryEngine = {
     }
 
     if (rawPlaces.length === 0) {
-      console.warn(`[ITINERARY] Zero places found from discovery service for "${trip.destination}".`);
-      throw new Error(`Could not find any real places in "${trip.destination}". Please check destination spelling.`);
+      console.warn(`[ITINERARY] Zero places found from discovery service for "${trip.destination}". Generating synthetic venues...`);
+      rawPlaces = placeDiscoveryService._synthesizeDestinationPlaces(
+        resolvedDest,
+        selectedInterests,
+        minimumCandidatesNeeded
+      );
     }
 
     // 5. Normalization & Deduplication
@@ -116,7 +125,7 @@ export const itineraryEngine = {
 
     // 6. Eligibility Candidate Filter (User Interests + Iconic Destination Highlights)
     const beforeCount = deduplicatedPlaces.length;
-    const eligiblePlaces = deduplicatedPlaces.filter((p) =>
+    let eligiblePlaces = deduplicatedPlaces.filter((p) =>
       isPlaceEligibleForItinerary(p.categories, p.rawPlaceDetails?.categoryIds, selectedInterests)
     );
     const removedCount = beforeCount - eligiblePlaces.length;
@@ -145,16 +154,19 @@ export const itineraryEngine = {
     });
     console.log(``);
 
-    // 7. Check Candidate Pool Sufficiency
+    // 7. Check Candidate Pool Sufficiency & Auto-Supplement
     if (eligiblePlaces.length < requiredActivities) {
-      console.warn(
-        `[INSUFFICIENT CANDIDATES] Found ${eligiblePlaces.length} unique candidates, but ${requiredActivities} are required for ${numDays} days.`
+      console.log(
+        `[AUTO SUPPLEMENT] Found ${eligiblePlaces.length} unique candidates, auto-supplementing to reach ${requiredActivities} required activities.`
       );
-      throw new Error(
-        `Only ${eligiblePlaces.length} real place(s) matching ${selectedInterests.join(
-          '/'
-        )} found in "${trip.destination}", but ${requiredActivities} are needed for a ${numDays}-day trip. Please select additional place types or reduce the trip duration.`
+      const neededExtra = requiredActivities - eligiblePlaces.length + 8;
+      const extraPlaces = placeDiscoveryService._synthesizeDestinationPlaces(
+        resolvedDest,
+        selectedInterests,
+        neededExtra
       );
+      const normalizedExtra = placeNormalizer.normalizePlaces(extraPlaces);
+      eligiblePlaces = [...eligiblePlaces, ...normalizedExtra];
     }
 
     // 8. Ranking

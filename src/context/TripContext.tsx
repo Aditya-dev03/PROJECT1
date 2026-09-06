@@ -1,19 +1,22 @@
 import React, { createContext, useContext, useCallback, useEffect } from 'react';
 import { Trip } from '../types';
 import { usePersistedState } from '../hooks/usePersistence';
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 import { generateUniqueJoinCode, normalizeJoinCode } from '../services/joinCodeService';
+import { cloudSyncService, TripPackage } from '../services/cloudSyncService';
 
 interface TripContextType {
   trips: Trip[];
   isLoaded: boolean;
   addTrip: (trip: Omit<Trip, 'id'>) => Promise<Trip>;
+  addJoinedTrip: (trip: Trip) => void;
   updateTrip: (id: string, updates: Partial<Trip>) => Promise<void>;
   deleteTrip: (id: string) => Promise<void>;
   getTripById: (id: string) => Trip | undefined;
   refreshTrips: () => Promise<void>;
   regenerateJoinCode: (tripId: string) => Promise<string>;
+  publishTripToCloud: (tripId: string) => Promise<void>;
 }
 
 const TripContext = createContext<TripContextType | undefined>(undefined);
@@ -23,7 +26,7 @@ const SEED_TRIPS: Trip[] = [
     id: '1',
     name: 'Summer in Santorini',
     destination: 'Santorini, Greece',
-    dates: 'Oct 12 - Oct 18, 2024',
+    dates: 'Oct 12 - Oct 18, 2026',
     image: 'https://images.unsplash.com/photo-1570077188670-e3a8d69ac5ff?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
     budget: 'Luxury',
     budgetAmount: 5000,
@@ -38,7 +41,7 @@ export const TripProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { user } = useAuth();
   const [trips, setTrips, isLoaded] = usePersistedState<Trip[]>('@travora_trips', SEED_TRIPS);
 
-  // Self-healing migration: Ensure all trips have a status AND a guaranteed joinCode
+  // Self-healing migration: Ensure all trips have a status AND a guaranteed joinCode + publish to cloud
   useEffect(() => {
     if (!isLoaded) return;
 
@@ -68,11 +71,28 @@ export const TripProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (hasChanges) {
       setTrips(updatedTrips);
     }
+
+    // Seed public cloud sync for user's trips so friends can find them anytime
+    updatedTrips.forEach(t => {
+      if (t.joinCode) {
+        const pkg: TripPackage = {
+          trip: t,
+          creator: {
+            id: user?.id || 'creator',
+            name: user?.name || 'Trip Host',
+            avatar: user?.photo,
+            email: user?.email,
+          },
+          updatedAt: new Date().toISOString(),
+        };
+        cloudSyncService.publishTripPackage(pkg);
+      }
+    });
   }, [isLoaded, trips.length]);
 
-  // Fetch trips from Supabase if logged in
+  // Fetch trips from Supabase if configured and user authenticated
   const fetchSupabaseTrips = useCallback(async () => {
-    if (!user || user.isGuest) return;
+    if (!isSupabaseConfigured || !user || user.isGuest) return;
     try {
       const { data, error } = await supabase
         .from('trips')
@@ -95,7 +115,13 @@ export const TripProvider: React.FC<{ children: React.ReactNode }> = ({ children
           status: t.status || 'Active',
           joinCode: t.join_code || generateUniqueJoinCode(),
         }));
-        setTrips(mappedTrips);
+
+        setTrips(prev => {
+          // Merge avoiding duplicate IDs
+          const existingMap = new Map(prev.map(p => [p.id, p]));
+          mappedTrips.forEach(mt => existingMap.set(mt.id, mt));
+          return Array.from(existingMap.values());
+        });
       }
     } catch (err) {
       console.warn('Error fetching trips from Supabase, relying on cache:', err);
@@ -114,73 +140,74 @@ export const TripProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [isLoaded, user, fetchSupabaseTrips]);
 
-  // Realtime listener for trip changes
-  useEffect(() => {
-    if (!user || user.isGuest) return;
+  // Add a joined foreign trip
+  const addJoinedTrip = useCallback((trip: Trip) => {
+    setTrips(prev => {
+      // Check if already in list
+      const cleanCode = normalizeJoinCode(trip.joinCode || '');
+      const exists = prev.some(
+        t => t.id === trip.id || (cleanCode && normalizeJoinCode(t.joinCode || '') === cleanCode)
+      );
+      if (exists) {
+        return prev.map(t =>
+          (t.id === trip.id || (cleanCode && normalizeJoinCode(t.joinCode || '') === cleanCode))
+            ? { ...t, ...trip }
+            : t
+        );
+      }
+      return [trip, ...prev];
+    });
+  }, [setTrips]);
 
-    const tripsChannel = supabase
-      .channel('public-trips-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'trips' },
-        () => {
-          fetchSupabaseTrips();
-        }
-      )
-      .subscribe();
+  const publishTripToCloud = useCallback(async (tripId: string) => {
+    const targetTrip = trips.find(t => t.id === tripId);
+    if (!targetTrip || !targetTrip.joinCode) return;
 
-    const membersChannel = supabase
-      .channel('public-members-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'trip_members' },
-        () => {
-          fetchSupabaseTrips();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(tripsChannel);
-      supabase.removeChannel(membersChannel);
+    const pkg: TripPackage = {
+      trip: targetTrip,
+      creator: {
+        id: user?.id || 'creator',
+        name: user?.name || 'Trip Host',
+        avatar: user?.photo,
+        email: user?.email,
+      },
+      updatedAt: new Date().toISOString(),
     };
-  }, [user, fetchSupabaseTrips]);
+    await cloudSyncService.publishTripPackage(pkg);
+  }, [trips, user]);
 
   const addTrip = useCallback(async (tripData: Omit<Trip, 'id'>) => {
     const existingCodes = trips.map(t => t.joinCode).filter(Boolean) as string[];
+    const joinCode = generateUniqueJoinCode(existingCodes);
 
-    // Guest Mode
-    if (!user || user.isGuest) {
-      const joinCode = generateUniqueJoinCode(existingCodes);
-      const newTrip: Trip = {
-        ...tripData,
-        id: Date.now().toString(),
-        status: 'Active',
-        joinCode,
-        image: tripData.image || `https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80`,
-      };
-      setTrips(prev => [newTrip, ...prev]);
-      return newTrip;
-    }
+    // Common trip object structure
+    const newTrip: Trip = {
+      ...tripData,
+      id: Date.now().toString(),
+      status: 'Active',
+      joinCode,
+      image: tripData.image || `https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80`,
+    };
 
-    // Supabase Mode
-    const MAX_ATTEMPTS = 5;
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      let joinCode = generateUniqueJoinCode(existingCodes);
+    // 1. Immediately save to local state
+    setTrips(prev => [newTrip, ...prev]);
 
+    // 2. Publish to universal Cloud Relay so ANY friend can join immediately
+    const tripPkg: TripPackage = {
+      trip: newTrip,
+      creator: {
+        id: user?.id || 'creator_' + Date.now(),
+        name: user?.name || 'Trip Host',
+        avatar: user?.photo,
+        email: user?.email,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+    cloudSyncService.publishTripPackage(tripPkg);
+
+    // 3. Supabase Sync (if configured and authenticated)
+    if (isSupabaseConfigured && user && !user.isGuest) {
       try {
-        // Double check uniqueness in Supabase table
-        const { data: existingDbCode } = await supabase
-          .from('trips')
-          .select('id')
-          .eq('join_code', joinCode)
-          .maybeSingle();
-
-        if (existingDbCode) {
-          existingCodes.push(joinCode);
-          continue; // collision in DB, pick another code
-        }
-
         const { data: newTripDb, error: insertError } = await supabase
           .from('trips')
           .insert({
@@ -190,76 +217,67 @@ export const TripProvider: React.FC<{ children: React.ReactNode }> = ({ children
             budget_amount: tripData.budgetAmount,
             dates: tripData.dates,
             interests: tripData.interests,
-            image: tripData.image || `https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80`,
+            image: newTrip.image,
             group_size: tripData.groupSize,
             status: 'Active',
             join_code: joinCode,
-            user_id: user.id
+            user_id: user.id,
           })
           .select()
           .single();
 
-        if (insertError) {
-          // If unique constraint violation on join_code (Postgres error 23505), retry with new code
-          if (insertError.code === '23505') {
-            console.warn(`Join code collision on ${joinCode}, retrying attempt ${attempt + 1}...`);
-            existingCodes.push(joinCode);
-            continue;
-          }
-          throw insertError;
-        }
-
-        const newTrip: Trip = {
-          id: newTripDb.id,
-          name: newTripDb.name,
-          destination: newTripDb.destination,
-          budget: newTripDb.budget,
-          budgetAmount: Number(newTripDb.budget_amount),
-          dates: newTripDb.dates,
-          interests: newTripDb.interests,
-          image: newTripDb.image,
-          groupSize: newTripDb.group_size,
-          status: newTripDb.status,
-          joinCode: newTripDb.join_code,
-        };
-
-        setTrips(prev => [newTrip, ...prev]);
-        return newTrip;
-      } catch (err: any) {
-        if (attempt === MAX_ATTEMPTS - 1) {
-          console.warn('Failed to insert trip to Supabase after retries, creating locally:', err);
-          // Fallback to local
-          const fallbackTrip: Trip = {
-            ...tripData,
-            id: Date.now().toString(),
-            status: 'Active',
-            joinCode: generateUniqueJoinCode(existingCodes),
-            image: tripData.image || `https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80`,
+        if (!insertError && newTripDb) {
+          const syncedTrip: Trip = {
+            ...newTrip,
+            id: newTripDb.id,
           };
-          setTrips(prev => [fallbackTrip, ...prev]);
-          return fallbackTrip;
+          setTrips(prev => prev.map(t => t.id === newTrip.id ? syncedTrip : t));
+          return syncedTrip;
         }
+      } catch (err) {
+        console.warn('Supabase trip insert fallback:', err);
       }
     }
 
-    // Final fallback safeguard
-    const finalFallbackTrip: Trip = {
-      ...tripData,
-      id: Date.now().toString(),
-      status: 'Active',
-      joinCode: generateUniqueJoinCode(existingCodes),
-      image: tripData.image || `https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80`,
-    };
-    setTrips(prev => [finalFallbackTrip, ...prev]);
-    return finalFallbackTrip;
+    return newTrip;
   }, [user, trips, setTrips]);
 
   const updateTrip = useCallback(async (id: string, updates: Partial<Trip>) => {
     // Local Update
-    setTrips(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
+    let updatedTrip: Trip | undefined;
+    setTrips(prev => {
+      const next = prev.map(t => {
+        if (t.id === id) {
+          updatedTrip = { ...t, ...updates };
+          return updatedTrip;
+        }
+        return t;
+      });
+      return next;
+    });
+
+    // Cloud Relay Sync & Event Broadcast
+    if (updatedTrip && updatedTrip.joinCode) {
+      const pkg: TripPackage = {
+        trip: updatedTrip,
+        creator: {
+          id: user?.id || 'creator',
+          name: user?.name || 'Trip Host',
+          avatar: user?.photo,
+          email: user?.email,
+        },
+        updatedAt: new Date().toISOString(),
+      };
+      cloudSyncService.publishTripPackage(pkg);
+      cloudSyncService.broadcastTripEvent(updatedTrip.joinCode, {
+        type: 'TRIP_UPDATED',
+        tripId: id,
+        payload: updates,
+      });
+    }
 
     // Supabase Sync
-    if (user && !user.isGuest) {
+    if (isSupabaseConfigured && user && !user.isGuest) {
       try {
         const dbUpdates: any = {};
         if (updates.name !== undefined) dbUpdates.name = updates.name;
@@ -273,12 +291,7 @@ export const TripProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (updates.status !== undefined) dbUpdates.status = updates.status;
         if (updates.joinCode !== undefined) dbUpdates.join_code = updates.joinCode;
 
-        const { error } = await supabase
-          .from('trips')
-          .update(dbUpdates)
-          .eq('id', id);
-
-        if (error) throw error;
+        await supabase.from('trips').update(dbUpdates).eq('id', id);
       } catch (err) {
         console.warn('Error updating trip in Supabase:', err);
       }
@@ -290,17 +303,36 @@ export const TripProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const newCode = generateUniqueJoinCode(existingCodes);
 
     // Update local state immediately
-    setTrips(prev => prev.map(t => t.id === tripId ? { ...t, joinCode: newCode } : t));
+    let updatedTrip: Trip | undefined;
+    setTrips(prev => {
+      return prev.map(t => {
+        if (t.id === tripId) {
+          updatedTrip = { ...t, joinCode: newCode };
+          return updatedTrip;
+        }
+        return t;
+      });
+    });
+
+    // Cloud Relay Publish
+    if (updatedTrip) {
+      const pkg: TripPackage = {
+        trip: updatedTrip,
+        creator: {
+          id: user?.id || 'creator',
+          name: user?.name || 'Trip Host',
+          avatar: user?.photo,
+          email: user?.email,
+        },
+        updatedAt: new Date().toISOString(),
+      };
+      await cloudSyncService.publishTripPackage(pkg);
+    }
 
     // Update Supabase if authenticated
-    if (user && !user.isGuest) {
+    if (isSupabaseConfigured && user && !user.isGuest) {
       try {
-        const { error } = await supabase
-          .from('trips')
-          .update({ join_code: newCode })
-          .eq('id', tripId);
-
-        if (error) throw error;
+        await supabase.from('trips').update({ join_code: newCode }).eq('id', tripId);
       } catch (err) {
         console.warn('Error updating regenerated join code in Supabase:', err);
       }
@@ -314,14 +346,9 @@ export const TripProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setTrips(prev => prev.filter(trip => trip.id !== id));
 
     // Supabase Sync
-    if (user && !user.isGuest) {
+    if (isSupabaseConfigured && user && !user.isGuest) {
       try {
-        const { error } = await supabase
-          .from('trips')
-          .delete()
-          .eq('id', id);
-
-        if (error) throw error;
+        await supabase.from('trips').delete().eq('id', id);
       } catch (err) {
         console.warn('Error deleting trip from Supabase:', err);
       }
@@ -333,7 +360,20 @@ export const TripProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [trips]);
 
   return (
-    <TripContext.Provider value={{ trips, isLoaded, addTrip, updateTrip, deleteTrip, getTripById, refreshTrips, regenerateJoinCode }}>
+    <TripContext.Provider
+      value={{
+        trips,
+        isLoaded,
+        addTrip,
+        addJoinedTrip,
+        updateTrip,
+        deleteTrip,
+        getTripById,
+        refreshTrips,
+        regenerateJoinCode,
+        publishTripToCloud,
+      }}
+    >
       {children}
     </TripContext.Provider>
   );
@@ -346,4 +386,3 @@ export const useTrips = () => {
   }
   return context;
 };
-

@@ -7,8 +7,10 @@ import { useAuth } from '../context/AuthContext';
 import { Trip } from '../types';
 import {
   copyJoinCodeToClipboard,
+  copyJoinLinkToClipboard,
   shareTripInvite,
 } from '../services/joinCodeService';
+import { cloudSyncService } from '../services/cloudSyncService';
 import { getInitials } from '../utils';
 
 interface GroupMembersProps {
@@ -25,16 +27,36 @@ export const GroupMembersScreen: React.FC<GroupMembersProps> = ({ onBack, tripDa
   const members = getMembersByTripId(tripId);
 
   const [copied, setCopied] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberEmail, setNewMemberEmail] = useState('');
   const [newMemberRole, setNewMemberRole] = useState<'Admin' | 'Member'>('Member');
+
+  // Real-time listener for friends joining live
+  React.useEffect(() => {
+    if (!tripData.joinCode) return;
+    const unsubscribe = cloudSyncService.subscribeToTripRealtime(tripData.joinCode, (event) => {
+      if (event.type === 'MEMBER_JOINED' && event.payload) {
+        addMember(event.payload);
+      }
+    });
+    return () => unsubscribe();
+  }, [tripData.joinCode, addMember]);
 
   const handleCopyCode = async () => {
     if (tripData.joinCode) {
       await copyJoinCodeToClipboard(tripData.joinCode);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const handleCopyLink = async () => {
+    if (tripData.joinCode) {
+      await copyJoinLinkToClipboard(tripData.joinCode);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
     }
   };
 
@@ -165,7 +187,7 @@ export const GroupMembersScreen: React.FC<GroupMembersProps> = ({ onBack, tripDa
                 </p>
               </div>
 
-              <div style={{ display: 'flex', gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                 <button
                   onClick={handleCopyCode}
                   className={copied ? 'btn-primary' : 'btn-outline'}
@@ -178,7 +200,22 @@ export const GroupMembersScreen: React.FC<GroupMembersProps> = ({ onBack, tripDa
                   }}
                 >
                   <WebIcon name={copied ? 'checkmark' : 'copy'} size={16} />
-                  <span>{copied ? 'Copied!' : 'Copy Code'}</span>
+                  <span>{copied ? 'Copied Code!' : 'Copy Code'}</span>
+                </button>
+
+                <button
+                  onClick={handleCopyLink}
+                  className={copiedLink ? 'btn-primary' : 'btn-outline'}
+                  style={{
+                    padding: '10px 18px',
+                    fontSize: '0.88rem',
+                    borderRadius: '12px',
+                    backgroundColor: copiedLink ? '#10B981' : undefined,
+                    borderColor: copiedLink ? '#10B981' : undefined,
+                  }}
+                >
+                  <WebIcon name={copiedLink ? 'checkmark' : 'link'} size={16} />
+                  <span>{copiedLink ? 'Copied Link!' : 'Copy Join Link'}</span>
                 </button>
 
                 <button

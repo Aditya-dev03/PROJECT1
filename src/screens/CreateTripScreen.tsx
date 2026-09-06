@@ -1,5 +1,4 @@
 import React, { useState, useMemo } from 'react';
-import confetti from 'canvas-confetti';
 import { WebIcon } from '../components/WebIcon';
 import { Button } from '../components/Button';
 import { InterestChip } from '../components/InterestChip';
@@ -170,13 +169,6 @@ export const CreateTripScreen = ({
         email: user?.email || '',
         avatar: user?.photo || '',
         role: 'Admin',
-      });
-
-      // Confetti effect!
-      confetti({
-        particleCount: 80,
-        spread: 70,
-        origin: { y: 0.6 },
       });
 
       if (onContinue) {

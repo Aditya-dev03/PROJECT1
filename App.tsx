@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { UserProvider } from './src/context/UserContext';
@@ -57,13 +57,31 @@ const AppContent = () => {
   const [currentScreen, setCurrentScreen] = useState<Screen>('splash');
   const [phoneForOTP, setPhoneForOTP] = useState('');
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
+  const [initialJoinCode, setInitialJoinCode] = useState<string | null>(null);
+  const [autoOpenJoin, setAutoOpenJoin] = useState(false);
 
   const selectedTrip = trips.find((t) => t.id === selectedTripId) || (trips.length > 0 ? trips[0] : undefined);
+
+  // Check URL params for direct join codes on initial load (e.g. ?join=SANTO1)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const joinParam = urlParams.get('join') || urlParams.get('code');
+      if (joinParam) {
+        setInitialJoinCode(joinParam.toUpperCase());
+        setAutoOpenJoin(true);
+      }
+    }
+  }, []);
 
   // Splash Finished
   const handleSplashFinish = () => {
     if (user) {
-      setCurrentScreen('home');
+      if (autoOpenJoin || initialJoinCode) {
+        setCurrentScreen('trips');
+      } else {
+        setCurrentScreen('home');
+      }
     } else {
       const hasSeenOnboarding = typeof window !== 'undefined' ? localStorage.getItem('@seen_onboarding') : null;
       setCurrentScreen(hasSeenOnboarding ? 'auth' : 'onboarding');
@@ -78,17 +96,27 @@ const AppContent = () => {
     setCurrentScreen('auth');
   };
 
-  // If user logs in while in auth flow, transition to home
+  // If user logs in while in auth flow, transition to home or trips (if join code pending)
   React.useEffect(() => {
     if (user && (currentScreen === 'auth' || currentScreen === 'phone_login' || currentScreen === 'otp')) {
-      setCurrentScreen('home');
+      if (autoOpenJoin || initialJoinCode) {
+        setCurrentScreen('trips');
+      } else {
+        setCurrentScreen('home');
+      }
     }
-  }, [user, currentScreen]);
+  }, [user, currentScreen, autoOpenJoin, initialJoinCode]);
 
   // View Trip Hub
   const handleViewTrip = (id: string) => {
     setSelectedTripId(id);
     setCurrentScreen('trip_details');
+  };
+
+  const handleOpenJoinFlow = (code?: string) => {
+    if (code) setInitialJoinCode(code);
+    setAutoOpenJoin(true);
+    setCurrentScreen('trips');
   };
 
   const showNavigation =
@@ -113,7 +141,12 @@ const AppContent = () => {
       {showNavigation && (
         <Navbar
           currentScreen={currentScreen}
-          onNavigate={(screen) => setCurrentScreen(screen as Screen)}
+          onNavigate={(screen) => {
+            if (screen === 'trips') {
+              setAutoOpenJoin(false);
+            }
+            setCurrentScreen(screen as Screen);
+          }}
           onCreateTrip={() => setCurrentScreen('create_trip')}
         />
       )}
@@ -142,7 +175,13 @@ const AppContent = () => {
           <OTPScreen
             phoneNumber={phoneForOTP}
             onBack={() => setCurrentScreen('phone_login')}
-            onSuccess={() => setCurrentScreen('home')}
+            onSuccess={() => {
+              if (autoOpenJoin || initialJoinCode) {
+                setCurrentScreen('trips');
+              } else {
+                setCurrentScreen('home');
+              }
+            }}
           />
         )}
 
@@ -150,6 +189,7 @@ const AppContent = () => {
           <HomeScreen
             onCreateTrip={() => setCurrentScreen('create_trip')}
             onViewTrip={handleViewTrip}
+            onJoinTrip={() => handleOpenJoinFlow()}
             onNavigateToTab={(tab) => setCurrentScreen(tab as Screen)}
           />
         )}
@@ -158,6 +198,8 @@ const AppContent = () => {
           <TripsScreen
             onViewTrip={handleViewTrip}
             onCreateTrip={() => setCurrentScreen('create_trip')}
+            initialJoinCode={initialJoinCode || undefined}
+            autoOpenJoin={autoOpenJoin}
           />
         )}
 
@@ -227,7 +269,12 @@ const AppContent = () => {
       {showNavigation && (
         <BottomNav
           currentScreen={currentScreen}
-          onNavigate={(screen) => setCurrentScreen(screen as Screen)}
+          onNavigate={(screen) => {
+            if (screen === 'trips') {
+              setAutoOpenJoin(false);
+            }
+            setCurrentScreen(screen as Screen);
+          }}
           onCreateTrip={() => setCurrentScreen('create_trip')}
         />
       )}

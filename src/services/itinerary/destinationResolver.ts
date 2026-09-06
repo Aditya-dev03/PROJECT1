@@ -128,9 +128,14 @@ export const destinationResolver = {
       }
     }
 
+    const preferredCleanName =
+      geocodeResult.cityName && /^[a-zA-Z\s,.-]+$/.test(geocodeResult.cityName)
+        ? geocodeResult.cityName
+        : rawInput.split(',')[0].trim() || geocodeResult.cityName || rawInput;
+
     return {
       rawInput,
-      cleanName: geocodeResult.cityName || rawInput,
+      cleanName: preferredCleanName,
       cityName: geocodeResult.cityName,
       state: geocodeResult.state,
       country: geocodeResult.country,

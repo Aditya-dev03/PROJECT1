@@ -1,13 +1,14 @@
 import React, { createContext, useContext, useCallback, useEffect } from 'react';
 import { Expense } from '../types';
 import { usePersistedState } from '../hooks/usePersistence';
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 
 interface ExpenseContextType {
   expenses: Expense[];
   isLoaded: boolean;
   addExpense: (expense: Omit<Expense, 'id' | 'createdAt'>) => Expense | Promise<Expense>;
+  syncExpensesForTrip: (tripId: string, expenses: Expense[]) => void;
   updateExpense: (id: string, updates: Partial<Expense>) => void;
   deleteExpense: (id: string) => void;
   getExpensesByTripId: (tripId: string) => Expense[];
@@ -47,9 +48,9 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const { user } = useAuth();
   const [expenses, setExpenses, isLoaded] = usePersistedState<Expense[]>('@travora_expenses', SEED_EXPENSES);
 
-  // Fetch all expenses from Supabase
+  // Fetch all expenses from Supabase if configured
   const fetchSupabaseExpenses = useCallback(async () => {
-    if (!user || user.isGuest) return;
+    if (!isSupabaseConfigured || !user || user.isGuest) return;
     try {
       const { data, error } = await supabase
         .from('expenses')
@@ -85,84 +86,74 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [isLoaded, user, fetchSupabaseExpenses]);
 
-  // Realtime subscription
-  useEffect(() => {
-    if (!user || user.isGuest) return;
-
-    const channel = supabase
-      .channel('public-expenses-context-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'expenses' },
-        () => {
-          fetchSupabaseExpenses();
+  const syncExpensesForTrip = useCallback((tripId: string, incomingExpenses: Expense[]) => {
+    if (!incomingExpenses || incomingExpenses.length === 0) return;
+    setExpenses(prev => {
+      const merged = [...prev];
+      for (const inc of incomingExpenses) {
+        const idx = merged.findIndex(e => e.id === inc.id || (e.tripId === tripId && e.title === inc.title && e.amount === inc.amount));
+        if (idx >= 0) {
+          merged[idx] = { ...merged[idx], ...inc };
+        } else {
+          merged.push({ ...inc, tripId });
         }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user, fetchSupabaseExpenses]);
+      }
+      return merged;
+    });
+  }, [setExpenses]);
 
   const addExpense = useCallback(async (data: Omit<Expense, 'id' | 'createdAt'>) => {
-    // Guest/Local mode
-    if (!user || user.isGuest) {
-      const newExpense: Expense = {
-        ...data,
-        id: Date.now().toString(),
-        createdAt: new Date().toISOString(),
-      };
-      setExpenses(prev => [newExpense, ...prev]);
-      return newExpense;
+    const newExpense: Expense = {
+      ...data,
+      id: Date.now().toString(),
+      createdAt: new Date().toISOString(),
+    };
+
+    // 1. Local state update
+    setExpenses(prev => [newExpense, ...prev]);
+
+    // 2. Supabase mode if configured
+    if (isSupabaseConfigured && user && !user.isGuest) {
+      try {
+        const { data: newExpDb, error } = await supabase
+          .from('expenses')
+          .insert({
+            trip_id: data.tripId,
+            title: data.title,
+            amount: data.amount,
+            paid_by: data.paidBy,
+            category: data.category,
+            split_type: data.splitType,
+            split_participants: data.splitParticipants,
+            custom_splits: data.customSplits,
+            status: data.status || 'Pending',
+          })
+          .select()
+          .single();
+
+        if (!error && newExpDb) {
+          const syncedExpense: Expense = {
+            id: newExpDb.id,
+            tripId: newExpDb.trip_id,
+            title: newExpDb.title,
+            amount: Number(newExpDb.amount || 0),
+            paidBy: newExpDb.paid_by,
+            category: newExpDb.category,
+            createdAt: newExpDb.created_at,
+            splitType: newExpDb.split_type || 'Equal',
+            splitParticipants: newExpDb.split_participants || [],
+            customSplits: newExpDb.custom_splits || undefined,
+            status: newExpDb.status || 'Pending',
+          };
+          setExpenses(prev => prev.map(e => e.id === newExpense.id ? syncedExpense : e));
+          return syncedExpense;
+        }
+      } catch (err) {
+        console.warn('Error saving expense to Supabase:', err);
+      }
     }
 
-    // Supabase mode
-    try {
-      const { data: newExpDb, error } = await supabase
-        .from('expenses')
-        .insert({
-          trip_id: data.tripId,
-          title: data.title,
-          amount: data.amount,
-          paid_by: data.paidBy,
-          category: data.category,
-          split_type: data.splitType,
-          split_participants: data.splitParticipants,
-          custom_splits: data.customSplits,
-          status: data.status || 'Pending',
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      const newExpense: Expense = {
-        id: newExpDb.id,
-        tripId: newExpDb.trip_id,
-        title: newExpDb.title,
-        amount: Number(newExpDb.amount || 0),
-        paidBy: newExpDb.paid_by,
-        category: newExpDb.category,
-        createdAt: newExpDb.created_at,
-        splitType: newExpDb.split_type || 'Equal',
-        splitParticipants: newExpDb.split_participants || [],
-        customSplits: newExpDb.custom_splits || undefined,
-        status: newExpDb.status || 'Pending',
-      };
-
-      setExpenses(prev => [newExpense, ...prev]);
-      return newExpense;
-    } catch (err) {
-      console.warn('Error saving expense to Supabase, using local fallback:', err);
-      const fallbackExpense: Expense = {
-        ...data,
-        id: Date.now().toString(),
-        createdAt: new Date().toISOString(),
-      };
-      setExpenses(prev => [fallbackExpense, ...prev]);
-      return fallbackExpense;
-    }
+    return newExpense;
   }, [user, setExpenses]);
 
   const updateExpense = useCallback(async (id: string, updates: Partial<Expense>) => {
@@ -170,7 +161,7 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setExpenses(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
 
     // Supabase Update
-    if (user && !user.isGuest) {
+    if (isSupabaseConfigured && user && !user.isGuest) {
       try {
         const dbUpdates: any = {};
         if (updates.title !== undefined) dbUpdates.title = updates.title;
@@ -182,12 +173,7 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (updates.customSplits !== undefined) dbUpdates.custom_splits = updates.customSplits;
         if (updates.status !== undefined) dbUpdates.status = updates.status;
 
-        const { error } = await supabase
-          .from('expenses')
-          .update(dbUpdates)
-          .eq('id', id);
-
-        if (error) throw error;
+        await supabase.from('expenses').update(dbUpdates).eq('id', id);
       } catch (err) {
         console.warn('Error updating expense in Supabase:', err);
       }
@@ -199,14 +185,9 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setExpenses(prev => prev.filter(e => e.id !== id));
 
     // Supabase Delete
-    if (user && !user.isGuest) {
+    if (isSupabaseConfigured && user && !user.isGuest) {
       try {
-        const { error } = await supabase
-          .from('expenses')
-          .delete()
-          .eq('id', id);
-
-        if (error) throw error;
+        await supabase.from('expenses').delete().eq('id', id);
       } catch (err) {
         console.warn('Error deleting expense from Supabase:', err);
       }
@@ -222,7 +203,18 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [setExpenses]);
 
   return (
-    <ExpenseContext.Provider value={{ expenses, isLoaded, addExpense, updateExpense, deleteExpense, getExpensesByTripId, deleteExpensesByTrip }}>
+    <ExpenseContext.Provider
+      value={{
+        expenses,
+        isLoaded,
+        addExpense,
+        syncExpensesForTrip,
+        updateExpense,
+        deleteExpense,
+        getExpensesByTripId,
+        deleteExpensesByTrip,
+      }}
+    >
       {children}
     </ExpenseContext.Provider>
   );

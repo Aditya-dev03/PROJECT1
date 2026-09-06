@@ -15,7 +15,10 @@ export const useItineraryGenerator = () => {
 
     try {
       const numDays = calculateTripDays(trip.dates);
-      const selectedInterests = trip.interests || [];
+      const selectedInterests =
+        Array.isArray(trip.interests) && trip.interests.length > 0
+          ? trip.interests
+          : ['Attractions', 'Cafes', 'Restaurants'];
 
       console.log(`\n==================================================`);
       console.log(`[TRIP INPUT]`);
@@ -25,11 +28,11 @@ export const useItineraryGenerator = () => {
       console.log(`Selected interests:      [ ${selectedInterests.join(', ')} ]`);
       console.log(`==================================================\n`);
 
-      if (selectedInterests.length === 0) {
-        throw new Error("Please select at least one type of place you'd like to visit.");
-      }
-
-      const days = await itineraryEngine.generateItinerary(trip);
+      setLoadingMessage(`Discovering top places in ${trip.destination}...`);
+      const days = await itineraryEngine.generateItinerary({
+        ...trip,
+        interests: selectedInterests,
+      });
 
       setLoadingMessage('Saving your travel plan...');
       await itineraryService.saveItinerary(trip.id, days);

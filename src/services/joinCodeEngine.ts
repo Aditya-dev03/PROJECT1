@@ -59,24 +59,27 @@ export const isValidJoinCode = (code: string): boolean => {
   return normalized.length === JOIN_CODE_LENGTH && /^[A-Z0-9]{6}$/.test(normalized);
 };
 
-
 /**
  * Formats a friendly invite message for sharing with friends.
  */
 export const formatTripInviteMessage = (
   trip: { name?: string; destination: string; dates?: string },
-  joinCode: string
+  joinCode: string,
+  appUrl?: string
 ): string => {
   const title = trip.name || `Trip to ${trip.destination}`;
   const dates = trip.dates ? `\n📅 Dates: ${trip.dates}` : '';
-  
+  const baseUrl = appUrl || (typeof window !== 'undefined' && window.location.origin ? window.location.origin : 'https://travora.app');
+  const directLink = `${baseUrl}/?join=${joinCode}`;
+
   return (
     `✈️ Join my trip to ${trip.destination} on Travora!\n\n` +
     `🗺️ Trip: ${title}${dates}\n` +
-    `🔑 Join Code: ${joinCode}\n\n` +
+    `🔑 Join Code: ${joinCode}\n` +
+    `🔗 Direct Link: ${directLink}\n\n` +
     `How to join:\n` +
-    `1. Open the Travora app\n` +
-    `2. Go to Trips > Tap Join Trip\n` +
-    `3. Enter code "${joinCode}" to jump in!`
+    `1. Click the link above OR open Travora\n` +
+    `2. Go to Trips > Enter code "${joinCode}"\n` +
+    `3. View itinerary, live tracking, chat, and split expenses!`
   );
 };

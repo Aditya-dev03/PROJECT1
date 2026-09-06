@@ -1,5 +1,4 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import confetti from 'canvas-confetti';
 import { WebIcon } from '../components/WebIcon';
 import { Button } from '../components/Button';
 import { useTheme } from '../context/ThemeContext';
@@ -24,7 +23,7 @@ export const AIItineraryScreen = ({
   if (!tripData) return null;
 
   const { getItineraryByTripId, updateItinerary, addActivity, removeActivity, editActivity } = useItinerary();
-  const { generateItinerary, loading, loadingMessage } = useItineraryGenerator();
+  const { generateItinerary, loading, loadingMessage, error } = useItineraryGenerator();
 
   const itinerary = getItineraryByTripId(tripId);
   const days = itinerary?.days || [];
@@ -48,13 +47,6 @@ export const AIItineraryScreen = ({
     const generatedDays = await generateItinerary(tripData);
     if (generatedDays && generatedDays.length > 0) {
       updateItinerary(tripId, generatedDays);
-      try {
-        confetti({
-          particleCount: 75,
-          spread: 65,
-          origin: { y: 0.6 },
-        });
-      } catch (_) {}
     }
   }, [tripId, tripData, generateItinerary, updateItinerary]);
 
@@ -204,6 +196,52 @@ export const AIItineraryScreen = ({
                 Matching verified spots, ratings, and clustering daily routes geographically.
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Error Notification Banner */}
+        {error && !loading && (
+          <div
+            className="glass-panel"
+            style={{
+              padding: '20px 24px',
+              borderRadius: '18px',
+              marginBottom: '24px',
+              border: '1.5px solid #EF4444',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '16px',
+              backgroundColor: 'rgba(239, 68, 68, 0.08)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <WebIcon name="alert-circle" size={24} color="#EF4444" />
+              <div>
+                <div style={{ fontWeight: 800, fontSize: '0.98rem', color: '#EF4444' }}>
+                  Itinerary Notice
+                </div>
+                <div style={{ fontSize: '0.85rem', color: theme.textLight, marginTop: '2px' }}>
+                  {error}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={handleGenerate}
+              style={{
+                padding: '8px 18px',
+                borderRadius: '10px',
+                fontSize: '0.85rem',
+                fontWeight: 700,
+                backgroundColor: theme.primary,
+                color: '#FFFFFF',
+                border: 'none',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Retry
+            </button>
           </div>
         )}
 

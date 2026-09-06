@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useCallback, useEffect } from 'react';
 import { Itinerary, ItineraryDay, Activity } from '../types';
 import { usePersistedState } from '../hooks/usePersistence';
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 import { itineraryService } from '../services/itineraryService';
 
@@ -9,6 +9,7 @@ interface ItineraryContextType {
   itineraries: Itinerary[];
   isLoaded: boolean;
   updateItinerary: (tripId: string, days: ItineraryDay[]) => void;
+  syncItineraryForTrip: (tripId: string, days: ItineraryDay[]) => void;
   getItineraryByTripId: (tripId: string) => Itinerary | undefined;
   addActivity: (tripId: string, dayId: string, activity: Omit<Activity, 'id'>) => void;
   removeActivity: (tripId: string, dayId: string, activityId: string) => void;
@@ -48,9 +49,9 @@ export const ItineraryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const { user } = useAuth();
   const [itineraries, setItineraries, isLoaded] = usePersistedState<Itinerary[]>('@travora_itineraries', SEED_ITINERARIES);
 
-  // Fetch all itineraries from Supabase
+  // Fetch all itineraries from Supabase if configured
   const fetchSupabaseItineraries = useCallback(async () => {
-    if (!user || user.isGuest) return;
+    if (!isSupabaseConfigured || !user || user.isGuest) return;
     try {
       const { data, error } = await supabase
         .from('itineraries')
@@ -73,7 +74,7 @@ export const ItineraryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Sync a single itinerary to Supabase
   const syncItinerary = useCallback(async (tripId: string, updatedDays: ItineraryDay[]) => {
-    if (user && !user.isGuest) {
+    if (isSupabaseConfigured && user && !user.isGuest) {
       await itineraryService.saveItinerary(tripId, updatedDays);
     }
   }, [user]);
@@ -85,29 +86,21 @@ export const ItineraryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, [isLoaded, user, fetchSupabaseItineraries]);
 
-  // Realtime subscription
-  useEffect(() => {
-    if (!user || user.isGuest) return;
-
-    const channel = supabase
-      .channel('public-itineraries-context-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'itineraries' },
-        () => {
-          fetchSupabaseItineraries();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user, fetchSupabaseItineraries]);
-
   const getItineraryByTripId = useCallback((tripId: string) => {
     return itineraries.find(it => it.tripId === tripId);
   }, [itineraries]);
+
+  const syncItineraryForTrip = useCallback((tripId: string, days: ItineraryDay[]) => {
+    if (!days || days.length === 0) return;
+    setItineraries(prev => {
+      const exists = prev.find(it => it.tripId === tripId);
+      if (exists) {
+        return prev.map(it => it.tripId === tripId ? { ...it, days } : it);
+      } else {
+        return [...prev, { id: 'it_' + tripId, tripId, days }];
+      }
+    });
+  }, [setItineraries]);
 
   const updateItinerary = useCallback((tripId: string, days: ItineraryDay[]) => {
     setItineraries(prev => {
@@ -193,16 +186,19 @@ export const ItineraryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [setItineraries]);
 
   return (
-    <ItineraryContext.Provider value={{ 
-      itineraries, 
-      isLoaded, 
-      updateItinerary, 
-      getItineraryByTripId,
-      addActivity,
-      removeActivity,
-      editActivity,
-      deleteItineraryByTrip
-    }}>
+    <ItineraryContext.Provider
+      value={{
+        itineraries,
+        isLoaded,
+        updateItinerary,
+        syncItineraryForTrip,
+        getItineraryByTripId,
+        addActivity,
+        removeActivity,
+        editActivity,
+        deleteItineraryByTrip
+      }}
+    >
       {children}
     </ItineraryContext.Provider>
   );

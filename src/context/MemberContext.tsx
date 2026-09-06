@@ -1,13 +1,15 @@
 import React, { createContext, useContext, useCallback, useEffect } from 'react';
 import { Member } from '../types';
 import { usePersistedState } from '../hooks/usePersistence';
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useAuth } from './AuthContext';
+import { cloudSyncService } from '../services/cloudSyncService';
 
 interface MemberContextType {
   members: Member[];
   isLoaded: boolean;
   addMember: (member: any) => Member;
+  syncMembersForTrip: (tripId: string, incomingMembers: Member[]) => void;
   removeMember: (id: string) => void;
   getMembersByTripId: (tripId: string) => Member[];
   deleteMembersByTrip: (tripId: string) => void;
@@ -38,9 +40,9 @@ export const MemberProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const { user } = useAuth();
   const [members, setMembers, isLoaded] = usePersistedState<Member[]>('@travora_members', SEED_MEMBERS);
 
-  // Fetch all members from Supabase
+  // Fetch all members from Supabase if configured
   const fetchSupabaseMembers = useCallback(async () => {
-    if (!user || user.isGuest) return;
+    if (!isSupabaseConfigured || !user || user.isGuest) return;
     try {
       const { data, error } = await supabase
         .from('trip_members')
@@ -56,10 +58,7 @@ export const MemberProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           )
         `);
 
-      if (error) {
-        // Table not created yet or network offline - fallback silently to local
-        return;
-      }
+      if (error) return;
 
       if (data && data.length > 0) {
         const mappedMembers: Member[] = data.map((tm: any) => ({
@@ -72,7 +71,6 @@ export const MemberProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }));
 
         setMembers(prev => {
-          // Merge Supabase members with local members, prioritizing DB entries
           const merged = [...prev];
           for (const m of mappedMembers) {
             const idx = merged.findIndex(existing => existing.tripId === m.tripId && (existing.id === m.id || (existing.email && existing.email === m.email)));
@@ -97,25 +95,24 @@ export const MemberProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [isLoaded, user, fetchSupabaseMembers]);
 
-  // Realtime subscription for membership changes
-  useEffect(() => {
-    if (!user || user.isGuest) return;
+  const syncMembersForTrip = useCallback((tripId: string, incomingMembers: Member[]) => {
+    if (!incomingMembers || incomingMembers.length === 0) return;
 
-    const channel = supabase
-      .channel('public-members-context-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'trip_members' },
-        () => {
-          fetchSupabaseMembers();
+    setMembers(prev => {
+      const updated = [...prev];
+      for (const inc of incomingMembers) {
+        const idx = updated.findIndex(
+          m => m.tripId === tripId && (m.id === inc.id || (m.name === inc.name && m.email === inc.email))
+        );
+        if (idx >= 0) {
+          updated[idx] = { ...updated[idx], ...inc };
+        } else {
+          updated.push({ ...inc, tripId });
         }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user, fetchSupabaseMembers]);
+      }
+      return updated;
+    });
+  }, [setMembers]);
 
   const addMember = useCallback((data: any) => {
     const newMember: Member = {
@@ -129,7 +126,6 @@ export const MemberProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     // 1. ALWAYS add to local state immediately so UI updates
     setMembers(prev => {
-      // Prevent duplicates
       const exists = prev.some(
         m => m.tripId === newMember.tripId && (m.id === newMember.id || (m.email && m.email === newMember.email))
       );
@@ -143,8 +139,8 @@ export const MemberProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return [...prev, newMember];
     });
 
-    // 2. If authenticated, optionally sync to Supabase in the background
-    if (user && !user.isGuest && data.tripId) {
+    // 2. If authenticated, optionally sync to Supabase in background
+    if (isSupabaseConfigured && user && !user.isGuest && data.tripId) {
       (async () => {
         try {
           await supabase
@@ -160,7 +156,6 @@ export const MemberProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       })();
     }
 
-
     return newMember;
   }, [user, setMembers]);
 
@@ -169,7 +164,7 @@ export const MemberProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setMembers(prev => prev.filter(m => m.id !== id));
 
     // 2. Remove from Supabase if authenticated
-    if (user && !user.isGuest) {
+    if (isSupabaseConfigured && user && !user.isGuest) {
       try {
         await supabase
           .from('trip_members')
@@ -205,7 +200,17 @@ export const MemberProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [setMembers]);
 
   return (
-    <MemberContext.Provider value={{ members, isLoaded, addMember, removeMember, getMembersByTripId, deleteMembersByTrip }}>
+    <MemberContext.Provider
+      value={{
+        members,
+        isLoaded,
+        addMember,
+        syncMembersForTrip,
+        removeMember,
+        getMembersByTripId,
+        deleteMembersByTrip,
+      }}
+    >
       {children}
     </MemberContext.Provider>
   );

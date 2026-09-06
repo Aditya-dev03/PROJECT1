@@ -9,6 +9,7 @@ import { getInitials } from '../utils';
 interface HomeScreenProps {
   onCreateTrip: () => void;
   onViewTrip: (id: string) => void;
+  onJoinTrip?: () => void;
   onNavigateToTab?: (tab: string) => void;
 }
 
@@ -46,6 +47,7 @@ const POPULAR_DESTINATIONS = [
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   onCreateTrip,
   onViewTrip,
+  onJoinTrip,
 }) => {
   const { theme, isDark } = useTheme();
   const { t } = useI18n();
@@ -93,15 +95,34 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             </h1>
           </div>
 
-          {/* Quick Create CTA */}
-          <button
-            onClick={onCreateTrip}
-            className="btn-primary"
-            style={{ borderRadius: '14px', padding: '10px 22px' }}
-          >
-            <WebIcon name="plus" size={20} color="#FFFFFF" />
-            <span>Create New Trip</span>
-          </button>
+          {/* Quick Create and Join CTAs */}
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+            {onJoinTrip && (
+              <button
+                onClick={onJoinTrip}
+                className="btn-outline"
+                style={{
+                  borderRadius: '14px',
+                  padding: '10px 18px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  fontWeight: 700,
+                }}
+              >
+                <WebIcon name="people" size={18} color={theme.primary} />
+                <span>Join with Code</span>
+              </button>
+            )}
+            <button
+              onClick={onCreateTrip}
+              className="btn-primary"
+              style={{ borderRadius: '14px', padding: '10px 22px' }}
+            >
+              <WebIcon name="plus" size={20} color="#FFFFFF" />
+              <span>Create New Trip</span>
+            </button>
+          </div>
         </div>
 
         {/* Search Bar */}
@@ -357,7 +378,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             </div>
 
             <div
-              onClick={onCreateTrip}
+              onClick={onJoinTrip || onCreateTrip}
               className="glass-panel"
               style={{
                 padding: '20px',
