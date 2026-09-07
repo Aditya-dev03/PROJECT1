@@ -1,35 +1,35 @@
 import React, { useState, useEffect } from 'react';
-import { ThemeProvider, useTheme } from './src/context/ThemeContext';
-import { AuthProvider, useAuth } from './src/context/AuthContext';
-import { UserProvider } from './src/context/UserContext';
-import { I18nProvider } from './src/context/I18nContext';
-import { TripProvider, useTrips } from './src/context/TripContext';
-import { ExpenseProvider } from './src/context/ExpenseContext';
-import { ItineraryProvider } from './src/context/ItineraryContext';
-import { MemberProvider } from './src/context/MemberContext';
-import { ChatProvider } from './src/context/ChatContext';
+import { ThemeProvider, useTheme } from './context/ThemeContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { UserProvider } from './context/UserContext';
+import { I18nProvider } from './context/I18nContext';
+import { TripProvider, useTrips } from './context/TripContext';
+import { ExpenseProvider } from './context/ExpenseContext';
+import { ItineraryProvider } from './context/ItineraryContext';
+import { MemberProvider } from './context/MemberContext';
+import { ChatProvider } from './context/ChatContext';
 
 // Navigation Components
-import { Navbar } from './src/components/Navbar';
-import { BottomNav } from './src/components/BottomNav';
+import { Navbar } from './components/Navbar';
+import { BottomNav } from './components/BottomNav';
 
 // Screens
-import { SplashScreen } from './src/screens/SplashScreen';
-import { OnboardingScreen } from './src/screens/OnboardingScreen';
-import { AuthScreen } from './src/screens/AuthScreen';
-import { PhoneLoginScreen } from './src/screens/PhoneLoginScreen';
-import { OTPScreen } from './src/screens/OTPScreen';
-import { HomeScreen } from './src/screens/HomeScreen';
-import { TripsScreen } from './src/screens/TripsScreen';
-import { CreateTripScreen } from './src/screens/CreateTripScreen';
-import { TripDetailsScreen } from './src/screens/TripDetailsScreen';
-import { AIItineraryScreen } from './src/screens/AIItineraryScreen';
-import { TripChatScreen } from './src/screens/TripChatScreen';
-import { TripExpensesScreen } from './src/screens/TripExpensesScreen';
-import { ExpensesScreen } from './src/screens/ExpensesScreen';
-import { LiveMapScreen } from './src/screens/LiveMapScreen';
-import { GroupMembersScreen } from './src/screens/GroupMembersScreen';
-import { ProfileScreen } from './src/screens/ProfileScreen';
+import { SplashScreen } from './screens/SplashScreen';
+import { OnboardingScreen } from './screens/OnboardingScreen';
+import { AuthScreen } from './screens/AuthScreen';
+import { PhoneLoginScreen } from './screens/PhoneLoginScreen';
+import { OTPScreen } from './screens/OTPScreen';
+import { HomeScreen } from './screens/HomeScreen';
+import { TripsScreen } from './screens/TripsScreen';
+import { CreateTripScreen } from './screens/CreateTripScreen';
+import { TripDetailsScreen } from './screens/TripDetailsScreen';
+import { AIItineraryScreen } from './screens/AIItineraryScreen';
+import { TripChatScreen } from './screens/TripChatScreen';
+import { TripExpensesScreen } from './screens/TripExpensesScreen';
+import { ExpensesScreen } from './screens/ExpensesScreen';
+import { LiveMapScreen } from './screens/LiveMapScreen';
+import { GroupMembersScreen } from './screens/GroupMembersScreen';
+import { ProfileScreen } from './screens/ProfileScreen';
 
 type Screen =
   | 'splash'
